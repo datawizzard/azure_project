@@ -1,0 +1,218 @@
+spark.conf.set("fs.azure.account.key.accyelpdataset.dfs.core.windows.net","ID3go9850r7DuFJM6xfkcJ8WOlGC3IeNJBVV2bmZwDA/kMWbK9rR9j/RiU7bDfqXzgqEw1kGTqW9+AStkJVr9A==")
+
+*******************************************
+
+dbutils.fs.ls("abfss://yelp-dataset-container@accyelpdataset.dfs.core.windows.net/")
+
+*******************************************
+
+df_review = spark.read.json("abfss://yelp-dataset-container@accyelpdataset.dfs.core.windows.net/yelp_academic_dataset-review.json")
+df_review.write.mode("overwrite").parquet("abfss://yelp-dataset-container@accyelpdataset.dfs.core.windows.net/json_to_parquet/review.parquet")
+
+df_user = spark.read.json("abfss://yelp-dataset-container@accyelpdataset.dfs.core.windows.net/yelp_academic_dataset-user.json")
+df_user.write.mode("overwrite").parquet("abfss://yelp-dataset-container@accyelpdataset.dfs.core.windows.net/json_to_parquet/user.parquet")
+
+df_buisness = spark.read.json("abfss://yelp-dataset-container@accyelpdataset.dfs.core.windows.net/yelp_academic_dataset_business.json")
+df_buisness.write.mode("overwrite").parquet("abfss://yelp-dataset-container@accyelpdataset.dfs.core.windows.net/json_to_parquet/buisness.parquet")
+
+df_checkin = spark.read.json("abfss://yelp-dataset-container@accyelpdataset.dfs.core.windows.net/yelp_academic_dataset_checkin.json")
+df_checkin.write.mode("overwrite").parquet("abfss://yelp-dataset-container@accyelpdataset.dfs.core.windows.net/json_to_parquet/checkin.parquet")
+
+df_tip = spark.read.json("abfss://yelp-dataset-container@accyelpdataset.dfs.core.windows.net/yelp_academic_dataset_tip.json")
+df_tip.write.mode("overwrite").parquet("abfss://yelp-dataset-container@accyelpdataset.dfs.core.windows.net/json_to_parquet/tip.parquet")
+
+
+******************************************************
+
+
+df_review = spark.read.parquet("abfss://yelp-dataset-container@accyelpdataset.dfs.core.windows.net/json_to_parquet/review.parquet")
+df_user = spark.read.parquet("abfss://yelp-dataset-container@accyelpdataset.dfs.core.windows.net/json_to_parquet/user.parquet")
+df_checkin = spark.read.parquet("abfss://yelp-dataset-container@accyelpdataset.dfs.core.windows.net/json_to_parquet/checkin.parquet")
+df_tip = spark.read.parquet("abfss://yelp-dataset-container@accyelpdataset.dfs.core.windows.net/json_to_parquet/tip.parquet")
+df_buisness = spark.read.parquet("abfss://yelp-dataset-container@accyelpdataset.dfs.core.windows.net/json_to_parquet/buisness.parquet")
+
+
+***************************************
+
+from pyspark.sql.functions import *
+df_tip = df_tip.withColumn("tip_year",year(to_date(col("date"))))
+df_tip = df_tip.withColumn("tip_month",month(to_date(col("date"))))
+df_tip.show()
+
+
+*****************************************
+
+df_tip.write.mode("overwrite").partitionBy("tip_year","tip_month").parquet("abfss://yelp-dataset-container@accyelpdataset.dfs.core.windows.net/tip_partitioned_by_year_and_month/")
+
+******************************************
+
+print("current number of partitions:" + str(df_user.rdd.getNumPartitions()))
+
+df_reduce_part = df_user.coalesce(10)
+print("reduced number of partitions after coalesce:" + str(df_reduce_part.rdd.getNumPartitions()))
+
+df_increased_part = df_user.repartition(30)
+print("increased number of partitions after coalesce:" + str(df_increased_part.rdd.getNumPartitions()))
+
+
+************************************************************************************************************
+
+
+df_user.coalesce(10).write.mode("overwrite").parquet("abfss://yelp-dataset-container@accyelpdataset.dfs.core.windows.net/coalesce/user.parquet")
+
+*************************************************************************************************************
+
+
+df_user.repartition(10).write.mode("overwrite").parquet("abfss://yelp-dataset-container@accyelpdataset.dfs.core.windows.net/repartition/user.parquet")
+
+**************************************************************************
+
+df_user.createOrReplaceTempView("user")
+
+************************************************
+
+%sql
+-- FIND THE TOP 3 USERS BASED ON THEIR TOTAL NUMBER OF REVIEWS
+
+select 
+    user_id,
+    name,
+    review_count
+from
+    user
+order by
+    review_count desc -- highest review_count users will be listed first as it is a descending order
+limit
+    3;
+	
+****************************************************************************
+
+%sql
+
+-- FIND THE TOP USERS WITH THE MOST FANS
+SELECT user_id,name,fans
+from user
+order by fans desc -- arrange user_id in descending order of number of fans
+limit 10 -- limit to first 10 rows
+
+
+********************************************************************************
+
+from pyspark.sql import *
+df_buisness_cat=df_buisness.groupBy("categories").agg(count("review_count").alias("total_review_count"))
+df_top_categories=df_buisness_cat.withColumn("rnk", row_number().over(Window.orderBy(col("total_review_count").desc())))
+df_top_categories=df_top_categories.filter(col("rnk") <= 10)
+display(df_top_categories)
+
+********************************************************************************
+
+
+df_buisness.createOrReplaceTempView("business")
+
+************************************************************************
+
+%sql
+
+select categories,total_review_count from (
+select business_categories.*,
+row_number() over (order by total_review_count Desc) rn
+from (select categories, count(review_count) as total_review_count from business group by categories ) business_categories
+)
+where rn <= 10
+
+***************************************
+
+df_business_reviews=df_buisness.groupBy("categories").agg(count("review_count").alias("total_review_count"))
+df_top_business=df_business_reviews.filter(df_business_reviews["total_review_count"] >= 500).orderBy(desc("total_review_count"))
+
+
+*********************************************
+
+display(df_top_business)
+
+******************************
+
+#ANALYSIS BUSINESS DATA : NUMBER OF RESTAURANTS PER STATE
+
+df_num_of_restaurants = df_buisness.select('state').groupBy('state').count().orderBy(desc("count"))
+display(df_num_of_restaurants)
+
+
+********************************************
+
+#ANALYZE TOP3 RESTAURANTS IN EACH STATE
+df_buisness.createOrReplaceTempView("business_restaurant")
+
+*********************************************
+
+%sql
+SELECT * FROM (
+      SELECT STATE,name,review_count,
+      ROW_NUMBER() OVER (PARTITION BY STATE ORDER BY review_count desc) rn 
+      FROM business_restaurant
+     )
+     WHERE rn <= 3
+	 
+	 
+*********************************************
+
+df_business_Arizona = df_buisness.filter(df_buisness['state']=='AZ')
+df_Arizona =df_business_Arizona.groupBy("name").agg(count("review_count").alias("total_review_count"))
+window = Window.orderBy(df_Arizona['total_review_count'].desc())
+df_Arizona_best_rest = df_Arizona.select('*',rank().over(window).alias('rank')).filter(col('rank') <= 10)
+display(df_Arizona_best_rest)
+
+
+***********************************************
+
+
+#NUMBER OF RESTAURANTS IN ARIZONA PER CITY
+
+df_business_Arizona = df_buisness.filter(df_buisness['state']=='AZ')
+df_business_Arizona = df_business_Arizona.groupBy('city').count().orderBy(desc("count"))
+
+
+********************************************
+
+
+#SELECT CITY WITH HIGHEST NUMBER OF RESTAURANTS
+window = Window.orderBy(df_business_Arizona['count'].desc())
+city_with_max_rest = df_business_Arizona \
+                    .select('*',rank().over(window).alias('rank')).filter(col('rank') <= 1) \
+                    .drop('rank')
+display(city_with_max_rest)
+
+**********************************************
+
+from pyspark.sql.functions import broadcast
+
+#join arizona city dataset with business datasets to get more details
+df_best_restaurants = df_buisness.join(broadcast(city_with_max_rest),"city",'inner')
+
+df_best_restaurants= df_best_restaurants.groupBy("name","stars").agg(count("review_count").alias("review_count"))
+
+df_best_restaurants = df_best_restaurants.filter(df_best_restaurants["review_count"] >= 10)
+df_best_restaurants = df_best_restaurants.filter(df_best_restaurants["stars"] >= 3)
+
+*************************************************
+
+
+df_business_Phoenix = df_buisness.filter(df_buisness.city == 'Tucson')
+
+df_business_italian = df_business_Phoenix.filter(df_buisness.categories.contains('Italian'))
+
+
+***************************************************
+
+df_best_italian_restaurants = df_business_italian.groupBy("name").agg(count("review_count").alias("review_count"))
+
+df_best_italian_restaurants = df_best_italian_restaurants.filter(df_best_italian_restaurants["review_count"] >= 3)
+
+display(df_best_italian_restaurants)
+
+****************************************************
+
+
+
+
+
